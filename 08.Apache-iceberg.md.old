@@ -1,0 +1,166 @@
+# 🟦 UD1 – Bloque 8: Apache Iceberg sobre HDFS e S3 (MinIO)
+
+## 🟩 Obxectivos da práctica
+- Comprender que é **Apache Iceberg** e o seu papel dentro dunha arquitectura Lakehouse.
+- Comparar Iceberg con **Delta Lake**, entendendo vantaxes e limitacións.
+- Configurar o clúster Spark/Hadoop para usar Iceberg.
+- Crear catálogos, namespaces e táboas Iceberg.
+- Importar datasets existentes (CSV → Iceberg).
+- Practicar time travel, evolución de esquema e optimización.
+- Traballar con HDFS e MinIO.
+
+## 1. Teoría: de Data Lake a Iceberg
+### 1.1 Limitacións dos Data Lakes tradicionais
+Os Data Lakes permiten almacenar grandes volumes de datos, pero carecen de:
+- ACID
+- Lecturas consistentes
+- Evolución de esquema robusta
+- Xestión eficiente de ficheiros
+- Rendemento consistente cando hai moitos ficheiros
+
+### 1.2 Tecnoloxías Lakehouse
+- **Delta Lake**
+- **Apache Iceberg**
+- **Apache Hudi**
+
+### 1.3 Que é Apache Iceberg?
+Iceberg é un formato de táboa transaccional deseñado para Data Lakes modernos.
+Inclúe:
+- ACID real
+- Metadatos escalables (manifest files)
+- Particionamento oculto
+- Evolución de esquema avanzada
+- Time travel nativo
+- Compatibilidade multisistema (Spark, Flink, Trino…)
+
+### 1.4 Iceberg vs Delta Lake
+| Característica | Delta Lake | Apache Iceberg |
+|----------------|------------|----------------|
+| Gobernanza | Databricks | ASF |
+| Motores soportados | Principalmente Spark | Spark, Flink, Trino… |
+| Metadatos | Delta Log | Manifest Lists / Manifest Files |
+| Particionamento | Hive-style | Particionamento oculto |
+| Evolución de esquema | Boa | Excelente |
+| Uso recomendado | Spark puro | Ecosistemas heteroxéneos |
+
+---
+
+## 2. Configuración do clúster para Iceberg
+### 2.1 JAR necesario
+Copiar a:
+```
+/opt/spark/jars-extra/iceberg-spark-runtime-3.5_2.12-1.5.0.jar
+```
+
+### 2.2 Activar Iceberg en Spark
+```
+spark.sql.extensions org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
+```
+
+### 2.3 Catálogo Iceberg en HDFS
+```
+spark.sql.catalog.local org.apache.iceberg.spark.SparkCatalog
+spark.sql.catalog.local.type hadoop
+spark.sql.catalog.local.warehouse hdfs://namenode:9000/warehouse/iceberg
+```
+
+### 2.4 Catálogo Iceberg en MinIO
+```
+spark.sql.catalog.minio org.apache.iceberg.spark.SparkCatalog
+spark.sql.catalog.minio.type hadoop
+spark.sql.catalog.minio.warehouse s3a://spark/iceberg-warehouse
+```
+
+### 2.5 Configuración S3A
+```
+spark.hadoop.fs.s3a.endpoint http://minio:9000
+spark.hadoop.fs.s3a.access.key minioadmin
+spark.hadoop.fs.s3a.secret.key minioadmin
+spark.hadoop.fs.s3a.path.style.access true
+spark.hadoop.fs.s3a.connection.ssl.enabled false
+spark.hadoop.fs.s3a.impl org.apache.hadoop.fs.s3a.S3AFileSystem
+spark.hadoop.fs.s3a.aws.credentials.provider org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider
+```
+
+---
+
+## 3. Escenario 1 — Iceberg sobre HDFS
+### 3.1 Crear namespace
+```sql
+CREATE NAMESPACE IF NOT EXISTS local.meteo;
+```
+
+### 3.2 Importar CSV
+```python
+df = spark.read.option("header", True).option("inferSchema", True).csv("/home/hadoop/work/meteo.csv")
+```
+
+### 3.3 Crear táboa Iceberg
+```python
+df.writeTo("local.meteo.lecturas").using("iceberg").create()
+```
+
+### 3.4 Consultas SQL
+```sql
+SELECT cidade, AVG(temperatura) FROM local.meteo.lecturas GROUP BY cidade;
+```
+
+### 3.5 Evolución de esquema
+```sql
+ALTER TABLE local.meteo.lecturas ADD COLUMN humidade DOUBLE;
+```
+
+### 3.6 Inserción
+```sql
+INSERT INTO local.meteo.lecturas VALUES ('2024-01-03','Lugo',7.3,65.0);
+```
+
+### 3.7 Time Travel
+```sql
+SELECT * FROM local.meteo.lecturas.history;
+SELECT * FROM local.meteo.lecturas VERSION AS OF 1;
+```
+
+---
+
+## 4. Escenario 2 — Iceberg sobre MinIO
+### 4.1 Crear namespace
+```sql
+CREATE NAMESPACE IF NOT EXISTS minio.meteo;
+```
+
+### 4.2 Crear táboa en MinIO
+```python
+df.writeTo("minio.meteo.lecturas").using("iceberg").create()
+```
+
+### 4.3 Particionamento dinámico
+```sql
+ALTER TABLE minio.meteo.lecturas REWRITE DATA USING PARTITION BY (cidade);
+```
+
+### 4.4 Ver ficheiros físicos
+```sql
+SELECT * FROM minio.meteo.lecturas.files;
+```
+
+---
+
+## 5. Caso práctico adicional
+Simulación de carga diaria:
+```python
+from pyspark.sql.functions import lit
+df_hoxe = df.withColumn("data", lit("2024-01-04"))
+df_hoxe.writeTo("local.meteo.lecturas").append()
+```
+
+---
+
+## 6. Exercicios propostos
+1. Crear táboa particionada en MinIO.
+2. Simular varias cargas diarias.
+3. Engadir e eliminar columnas analizando cambios en metadatos.
+4. Comparar snapshots Iceberg vs Delta Lake.
+5. Explorar manifest files en MinIO.
+
+---
